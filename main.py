@@ -34,7 +34,7 @@ async def fetch_sitemap(session, sitemap_url):
                 results = await asyncio.gather(*tasks)
                 sitemap_data.extend(results)
 
-                # Process nested sitemaps
+                # Process <sitemap> elements
                 sitemaps = xml_data.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}sitemap')
                 nested_tasks = [fetch_sitemap(session, sitemap.find('{http://www.sitemaps.org/schemas/sitemap/0.9}loc').text) for sitemap in sitemaps]
                 nested_results = await asyncio.gather(*nested_tasks)
@@ -44,10 +44,10 @@ async def fetch_sitemap(session, sitemap_url):
 
                 return sitemap_data
             else:
-                print('Failed to fetch sitemap:', response.status)
+                print(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
                 return None
     except Exception as e:
-        print('Error fetching or parsing XML sitemap:', e)
+        print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
         return None
 
 async def process_url(session, url):
@@ -85,7 +85,7 @@ async def fetch_title(session, url):
             else:
                 return None
     except Exception as e:
-        print('Error fetching or parsing HTML page:', e)
+        print(f'Error fetching or parsing HTML page {url}: {e}')
         return None
 
 def search_sitemap(sitemap_data, search_query):
