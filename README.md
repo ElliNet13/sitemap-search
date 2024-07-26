@@ -8,15 +8,6 @@ Sitemap Search is a Python tool designed to search for specific keywords within 
 - Searches for keywords within the sitemap URLs
 - Outputs results in a clear, easy-to-read format
 
-## Requirements
-
-To use Sitemap Search, you need to have the following Python packages installed:
-
-- `requests`
-- `beautifulsoup4`
-
-These can be installed using the provided `requirements.txt` file.
-
 ## Installation
 
 1. Clone the repository to your local machine:
