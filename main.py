@@ -3,7 +3,7 @@ import aiohttp
 from xml.etree import ElementTree as ET
 from bs4 import BeautifulSoup
 import sys
-from tqdm import tqdm  # Import tqdm for the progress bar
+from tqdm import tqdm
 
 """
 This script was made by ElliNet13
@@ -23,7 +23,10 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         sitemap_url (str): The URL of the sitemap XML.
         show_errors (bool): Flag to determine if errors should be shown for child sitemaps.
-        progress_bar (tqdm): The progress bar instance to update.
+        progress_bar (bool): Whether to show progress bar.
+    
+    Returns:
+        list: A list of dictionaries containing the titles and links of the URLs in the sitemap.
     """
     try:
         async with session.get(sitemap_url) as response:
@@ -47,10 +50,15 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
                 # Process <url> elements
                 urls = xml_data.findall(f'.//{{{namespace}}}url')
                 tasks = [process_url(session, url, namespace) for url in urls]
-                for _ in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs", disable=not progress_bar):
-                    await _
-
-                sitemap_data.extend(await asyncio.gather(*tasks))
+                
+                # Use tqdm for progress bar if enabled
+                if progress_bar:
+                    results = []
+                    for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs"):
+                        results.append(await coro)
+                    sitemap_data.extend(results)
+                else:
+                    sitemap_data.extend(await asyncio.gather(*tasks))
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
@@ -58,14 +66,19 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
                     fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar)
                     for sitemap in sitemaps
                 ]
-                
-                for _ in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps", disable=not progress_bar):
-                    await _
 
-                nested_results = await asyncio.gather(*nested_tasks)
-                for nested_data in nested_results:
-                    if nested_data:
-                        sitemap_data.extend(nested_data)
+                if progress_bar:
+                    nested_results = []
+                    for coro in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps"):
+                        nested_results.append(await coro)
+                    for nested_data in nested_results:
+                        if nested_data:
+                            sitemap_data.extend(nested_data)
+                else:
+                    nested_results = await asyncio.gather(*nested_tasks)
+                    for nested_data in nested_results:
+                        if nested_data:
+                            sitemap_data.extend(nested_data)
 
                 return sitemap_data
             else:
