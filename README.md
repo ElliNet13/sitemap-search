@@ -35,6 +35,12 @@ To use the Sitemap Search tool, run the `main.py` script:
 ```bash
 python main.py
 ```
+### Arguments
+```-showerrors``` - Shows errors for child sitemaps if this flag is present. By default, errors for child sitemaps are not shown.
+```-bar``` - Enables a progress bar to display the progress of processing URLs and sitemaps.
+```-cache``` - Enables caching of sitemaps and pages to a `cache` directory to speed up subsequent runs by avoiding repeated requests to the same URLs.
+
+
 
 ## How to update
 It's simple as this is Github its just one command:
