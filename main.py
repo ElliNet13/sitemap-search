@@ -3,6 +3,7 @@ import aiohttp
 from xml.etree import ElementTree as ET
 from bs4 import BeautifulSoup
 import sys
+import tqdm
 
 """
 This script was made by ElliNet13
@@ -14,7 +15,7 @@ print("Made by ElliNet13")
 NAMESPACE_0_9 = 'http://www.sitemaps.org/schemas/sitemap/0.9'
 NAMESPACE_0_84 = 'http://www.google.com/schemas/sitemap/0.84'
 
-async def fetch_sitemap(session, sitemap_url, show_errors):
+async def fetch_sitemap(session, sitemap_url, show_errors, store_sitemaps, sitemaps_memory):
     """
     Fetches the sitemap XML from the specified URL and extracts the URLs along with their titles.
 
@@ -22,6 +23,8 @@ async def fetch_sitemap(session, sitemap_url, show_errors):
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         sitemap_url (str): The URL of the sitemap XML.
         show_errors (bool): Flag to determine if errors should be shown for child sitemaps.
+        store_sitemaps (bool): Flag to determine if sitemaps should be stored in memory.
+        sitemaps_memory (list): List to store sitemaps in memory.
 
     Returns:
         list: A list of dictionaries containing the titles and links of the URLs in the sitemap.
@@ -47,16 +50,17 @@ async def fetch_sitemap(session, sitemap_url, show_errors):
 
                 # Process <url> elements
                 urls = xml_data.findall(f'.//{{{namespace}}}url')
-                tasks = [process_url(session, url, namespace) for url in urls]
-                results = await asyncio.gather(*tasks)
-                sitemap_data.extend(results)
+                sitemap_data.extend(urls)
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
+                if store_sitemaps:
+                    sitemaps_memory.extend(sitemaps)
+
                 if show_errors:
-                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors) for sitemap in sitemaps]
+                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, store_sitemaps, sitemaps_memory) for sitemap in sitemaps]
                 else:
-                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, False) for sitemap in sitemaps]
+                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, False, store_sitemaps, sitemaps_memory) for sitemap in sitemaps]
                 
                 nested_results = await asyncio.gather(*nested_tasks)
                 for nested_data in nested_results:
@@ -157,16 +161,49 @@ def select_site(sitemap_data):
         return None
 
 async def main():
-    # Check if -showerrors flag is present
+    # Check if flags are present
     show_errors = '-showerrors' in sys.argv
+    use_progress_bar = '-bar' in sys.argv
     
     sitemap_url = input("Enter the URL of the sitemap XML (Leave empty to use https://ellinet13.github.io/sitemap.xml): ")
     if not sitemap_url:
         sitemap_url = "https://ellinet13.github.io/sitemap.xml"
 
     print("Loading sitemap...")
+
+    sitemaps_memory = []
+    total_urls = 0
+
     async with aiohttp.ClientSession() as session:
-        sitemap_data = await fetch_sitemap(session, sitemap_url, True)
+        if use_progress_bar:
+            # First pass: Fetch all sitemaps and count total URLs
+            initial_data = await fetch_sitemap(session, sitemap_url, show_errors, True, sitemaps_memory)
+            if initial_data:
+                urls_count = sum(len(xml_data.findall(f'.//{{{NAMESPACE_0_9}}}url')) for xml_data in sitemaps_memory)
+                total_urls = urls_count
+                print(f"Total URLs found: {total_urls}")
+            
+            # Second pass: Fetch all URLs with a progress bar
+            with tqdm.tqdm(total=total_urls, desc="Processing URLs") as pbar:
+                sitemap_data = []
+                for sitemap in sitemaps_memory:
+                    urls = sitemap.findall(f'.//{{{NAMESPACE_0_9}}}url')
+                    tasks = [process_url(session, url, NAMESPACE_0_9) for url in urls]
+                    results = await asyncio.gather(*tasks)
+                    sitemap_data.extend(results)
+                    pbar.update(len(urls))
+                
+                # Process remaining sitemaps
+                sitemaps = [sitemap.find(f'{{{NAMESPACE_0_9}}}loc').text for sitemap in sitemaps_memory]
+                nested_tasks = [fetch_sitemap(session, url, show_errors, False, sitemaps_memory) for url in sitemaps]
+                nested_results = await asyncio.gather(*nested_tasks)
+                for nested_data in nested_results:
+                    if nested_data:
+                        sitemap_data.extend(nested_data)
+                        urls_count = len(nested_data)
+                        pbar.update(urls_count)
+        else:
+            sitemap_data = await fetch_sitemap(session, sitemap_url, show_errors, False, sitemaps_memory)
     
     if sitemap_data:
         print("Done!")
@@ -185,4 +222,5 @@ async def main():
         print("Failed to load sitemap.")
 
 if __name__ == "__main__":
+
     asyncio.run(main())
