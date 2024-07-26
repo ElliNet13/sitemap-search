@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 from xml.etree import ElementTree as ET
 from bs4 import BeautifulSoup
+import sys
 
 """
 This script was made by ElliNet13
@@ -13,13 +14,14 @@ print("Made by ElliNet13")
 NAMESPACE_0_9 = 'http://www.sitemaps.org/schemas/sitemap/0.9'
 NAMESPACE_0_84 = 'http://www.google.com/schemas/sitemap/0.84'
 
-async def fetch_sitemap(session, sitemap_url):
+async def fetch_sitemap(session, sitemap_url, show_errors):
     """
     Fetches the sitemap XML from the specified URL and extracts the URLs along with their titles.
 
     Args:
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         sitemap_url (str): The URL of the sitemap XML.
+        show_errors (bool): Flag to determine if errors should be shown for child sitemaps.
 
     Returns:
         list: A list of dictionaries containing the titles and links of the URLs in the sitemap.
@@ -51,7 +53,11 @@ async def fetch_sitemap(session, sitemap_url):
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
-                nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text) for sitemap in sitemaps]
+                if show_errors:
+                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors) for sitemap in sitemaps]
+                else:
+                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, False) for sitemap in sitemaps]
+                
                 nested_results = await asyncio.gather(*nested_tasks)
                 for nested_data in nested_results:
                     if nested_data:
@@ -151,13 +157,16 @@ def select_site(sitemap_data):
         return None
 
 async def main():
+    # Check if -showerrors flag is present
+    show_errors = '-showerrors' in sys.argv
+    
     sitemap_url = input("Enter the URL of the sitemap XML (Leave empty to use https://ellinet13.github.io/sitemap.xml): ")
     if not sitemap_url:
         sitemap_url = "https://ellinet13.github.io/sitemap.xml"
 
     print("Loading sitemap...")
     async with aiohttp.ClientSession() as session:
-        sitemap_data = await fetch_sitemap(session, sitemap_url)
+        sitemap_data = await fetch_sitemap(session, sitemap_url, True)
     
     if sitemap_data:
         print("Done!")
