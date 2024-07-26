@@ -46,7 +46,8 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
                     namespace = NAMESPACE_0_84
 
                 if not namespace:
-                    errors.append(f'Unsupported sitemap namespace in {sitemap_url}')
+                    if show_errors:
+                        errors.append(f'Unsupported sitemap namespace in {sitemap_url}')
                     return sitemap_data, errors
 
                 # Process <url> elements
@@ -57,8 +58,13 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
                 if progress_bar:
                     results = []
                     for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs"):
-                        results.append(await coro)
-                        progress_bar.update(1)
+                        try:
+                            results.append(await coro)
+                            progress_bar.update(1)
+                        except Exception as e:
+                            if show_errors:
+                                errors.append(f'Error processing URL: {e}')
+                            results.append({'title': 'Error', 'link': 'Error'})
                     sitemap_data.extend(results)
                 else:
                     results = await asyncio.gather(*tasks)
@@ -76,7 +82,8 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
                     for coro in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps"):
                         result, nested_errors = await coro
                         nested_results.append(result)
-                        errors.extend(nested_errors)
+                        if show_errors:
+                            errors.extend(nested_errors)
                         progress_bar.update(1)
                     for nested_data in nested_results:
                         if nested_data:
@@ -89,10 +96,12 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
 
                 return sitemap_data, errors
             else:
-                errors.append(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
+                if show_errors:
+                    errors.append(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
                 return None, errors
     except Exception as e:
-        errors.append(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
+        if show_errors:
+            errors.append(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
         return None, errors
 
 async def process_url(session, url, namespace):
@@ -204,7 +213,7 @@ async def main():
             sitemap_data, errors = await fetch_sitemap(session, sitemap_url, show_errors, None, 0)
     
     if progress_bar:
-        if errors:
+        if show_errors and errors:
             print("\nErrors encountered:")
             for error in errors:
                 print(f"  - {error}")
@@ -223,7 +232,10 @@ async def main():
         else:
             print("No site selected.")
     else:
-        print("Failed to load sitemap.")
+        if show_errors:
+            print("Failed to load sitemap.")
+        else:
+            print("Failed to load sitemap.")
 
 if __name__ == "__main__":
     asyncio.run(main())
