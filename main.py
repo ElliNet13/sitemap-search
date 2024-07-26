@@ -9,6 +9,10 @@ If you use this script please give credit.
 """
 print("Made by ElliNet13")
 
+# Define the namespaces
+NAMESPACE_0_9 = 'http://www.sitemaps.org/schemas/sitemap/0.9'
+NAMESPACE_0_84 = 'http://www.google.com/schemas/sitemap/0.84'
+
 async def fetch_sitemap(session, sitemap_url):
     """
     Fetches the sitemap XML from the specified URL and extracts the URLs along with their titles.
@@ -28,15 +32,26 @@ async def fetch_sitemap(session, sitemap_url):
 
                 sitemap_data = []
 
+                # Determine the namespace used
+                namespace = None
+                if xml_data.tag.startswith(f'{{{NAMESPACE_0_9}}}'):
+                    namespace = NAMESPACE_0_9
+                elif xml_data.tag.startswith(f'{{{NAMESPACE_0_84}}}'):
+                    namespace = NAMESPACE_0_84
+
+                if not namespace:
+                    print(f'Unsupported sitemap namespace in {sitemap_url}')
+                    return None
+
                 # Process <url> elements
-                urls = xml_data.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}url')
-                tasks = [process_url(session, url) for url in urls]
+                urls = xml_data.findall(f'.//{{{namespace}}}url')
+                tasks = [process_url(session, url, namespace) for url in urls]
                 results = await asyncio.gather(*tasks)
                 sitemap_data.extend(results)
 
                 # Process <sitemap> elements
-                sitemaps = xml_data.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}sitemap')
-                nested_tasks = [fetch_sitemap(session, sitemap.find('{http://www.sitemaps.org/schemas/sitemap/0.9}loc').text) for sitemap in sitemaps]
+                sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
+                nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text) for sitemap in sitemaps]
                 nested_results = await asyncio.gather(*nested_tasks)
                 for nested_data in nested_results:
                     if nested_data:
@@ -50,19 +65,20 @@ async def fetch_sitemap(session, sitemap_url):
         print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
         return None
 
-async def process_url(session, url):
+async def process_url(session, url, namespace):
     """
     Processes a single <url> element to extract the link and title.
 
     Args:
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         url (Element): The <url> XML element.
+        namespace (str): The namespace used in the sitemap.
 
     Returns:
         dict: A dictionary containing the title and link of the URL.
     """
-    loc = url.find('{http://www.sitemaps.org/schemas/sitemap/0.9}loc').text
-    name = url.find('{http://www.sitemaps.org/schemas/sitemap/0.9}name')
+    loc = url.find(f'{{{namespace}}}loc').text
+    name = url.find(f'{{{namespace}}}name')
     title = name.text if name is not None and name.text else await fetch_title(session, loc)
     return {'title': title if title else loc, 'link': loc}
 
