@@ -30,13 +30,12 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
         tuple: A tuple containing the list of dictionaries with sitemap data and a list of errors.
     """
     errors = []
+    sitemap_data = []
     try:
         async with session.get(sitemap_url) as response:
             if response.status == 200:
                 xml_text = await response.text()
                 xml_data = ET.fromstring(xml_text)
-
-                sitemap_data = []
 
                 # Determine the namespace used
                 namespace = None
@@ -53,8 +52,7 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
                 # Process <url> elements
                 urls = xml_data.findall(f'.//{{{namespace}}}url')
                 tasks = [process_url(session, url, namespace) for url in urls]
-                
-                # Track progress
+
                 if progress_bar:
                     results = []
                     for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs"):
@@ -72,12 +70,11 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
-                nested_tasks = [
-                    fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar, len(sitemaps))
-                    for sitemap in sitemaps
-                ]
-
                 if progress_bar:
+                    nested_tasks = [
+                        fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar, len(sitemaps))
+                        for sitemap in sitemaps
+                    ]
                     nested_results = []
                     for coro in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps"):
                         result, nested_errors = await coro
@@ -89,6 +86,7 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_c
                         if nested_data:
                             sitemap_data.extend(nested_data)
                 else:
+                    nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, None, 0) for sitemap in sitemaps]
                     nested_results = await asyncio.gather(*nested_tasks)
                     for nested_data in nested_results:
                         if nested_data:
@@ -201,17 +199,18 @@ async def main():
 
     print("Loading sitemap...")
 
-    # Initialize progress bar if -onebar flag is present
+    errors = []
+
     if one_bar:
+        # Initialize single progress bar
         with tqdm(total=1, desc="Processing Sitemaps") as pbar:
             async with aiohttp.ClientSession() as session:
                 sitemap_data, errors = await fetch_sitemap(session, sitemap_url, show_errors, pbar, 1)
             pbar.update(1)
     else:
-        errors = []
         async with aiohttp.ClientSession() as session:
             sitemap_data, errors = await fetch_sitemap(session, sitemap_url, show_errors, None, 0)
-    
+
     if progress_bar:
         if show_errors and errors:
             print("\nErrors encountered:")
@@ -232,10 +231,7 @@ async def main():
         else:
             print("No site selected.")
     else:
-        if show_errors:
-            print("Failed to load sitemap.")
-        else:
-            print("Failed to load sitemap.")
+        print("Failed to load sitemap.")
 
 if __name__ == "__main__":
     asyncio.run(main())
