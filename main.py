@@ -15,7 +15,7 @@ print("Made by ElliNet13")
 NAMESPACE_0_9 = 'http://www.sitemaps.org/schemas/sitemap/0.9'
 NAMESPACE_0_84 = 'http://www.google.com/schemas/sitemap/0.84'
 
-async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
+async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar, total_count):
     """
     Fetches the sitemap XML from the specified URL and extracts the URLs along with their titles.
 
@@ -23,11 +23,13 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         sitemap_url (str): The URL of the sitemap XML.
         show_errors (bool): Flag to determine if errors should be shown for child sitemaps.
-        progress_bar (bool): Whether to show progress bar.
-    
+        progress_bar (tqdm): The tqdm progress bar object.
+        total_count (int): Total number of tasks to process.
+
     Returns:
-        list: A list of dictionaries containing the titles and links of the URLs in the sitemap.
+        tuple: A tuple containing the list of dictionaries with sitemap data and a list of errors.
     """
+    errors = []
     try:
         async with session.get(sitemap_url) as response:
             if response.status == 200:
@@ -44,33 +46,38 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
                     namespace = NAMESPACE_0_84
 
                 if not namespace:
-                    print(f'Unsupported sitemap namespace in {sitemap_url}')
-                    return None
+                    errors.append(f'Unsupported sitemap namespace in {sitemap_url}')
+                    return sitemap_data, errors
 
                 # Process <url> elements
                 urls = xml_data.findall(f'.//{{{namespace}}}url')
                 tasks = [process_url(session, url, namespace) for url in urls]
                 
-                # Use tqdm for progress bar if enabled
+                # Track progress
                 if progress_bar:
                     results = []
                     for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs"):
                         results.append(await coro)
+                        progress_bar.update(1)
                     sitemap_data.extend(results)
                 else:
-                    sitemap_data.extend(await asyncio.gather(*tasks))
+                    results = await asyncio.gather(*tasks)
+                    sitemap_data.extend(results)
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
                 nested_tasks = [
-                    fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar)
+                    fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar, len(sitemaps))
                     for sitemap in sitemaps
                 ]
 
                 if progress_bar:
                     nested_results = []
                     for coro in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps"):
-                        nested_results.append(await coro)
+                        result, nested_errors = await coro
+                        nested_results.append(result)
+                        errors.extend(nested_errors)
+                        progress_bar.update(1)
                     for nested_data in nested_results:
                         if nested_data:
                             sitemap_data.extend(nested_data)
@@ -80,13 +87,13 @@ async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
                         if nested_data:
                             sitemap_data.extend(nested_data)
 
-                return sitemap_data
+                return sitemap_data, errors
             else:
-                print(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
-                return None
+                errors.append(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
+                return None, errors
     except Exception as e:
-        print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
-        return None
+        errors.append(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
+        return None, errors
 
 async def process_url(session, url, namespace):
     """
@@ -174,18 +181,34 @@ def select_site(sitemap_data):
         return None
 
 async def main():
-    # Check if -showerrors flag is present
+    # Check if -showerrors, -bar or -onebar flags are present
     show_errors = '-showerrors' in sys.argv
-    progress_bar = '-bar' in sys.argv  # Check if -bar flag is present
-    
+    progress_bar = '-bar' in sys.argv or '-onebar' in sys.argv
+    one_bar = '-onebar' in sys.argv
+
     sitemap_url = input("Enter the URL of the sitemap XML (Leave empty to use https://ellinet13.github.io/sitemap.xml): ")
     if not sitemap_url:
         sitemap_url = "https://ellinet13.github.io/sitemap.xml"
 
     print("Loading sitemap...")
-    async with aiohttp.ClientSession() as session:
-        sitemap_data = await fetch_sitemap(session, sitemap_url, show_errors, progress_bar)
+
+    # Initialize progress bar if -onebar flag is present
+    if one_bar:
+        with tqdm(total=1, desc="Processing Sitemaps") as pbar:
+            async with aiohttp.ClientSession() as session:
+                sitemap_data, errors = await fetch_sitemap(session, sitemap_url, show_errors, pbar, 1)
+            pbar.update(1)
+    else:
+        errors = []
+        async with aiohttp.ClientSession() as session:
+            sitemap_data, errors = await fetch_sitemap(session, sitemap_url, show_errors, None, 0)
     
+    if progress_bar:
+        if errors:
+            print("\nErrors encountered:")
+            for error in errors:
+                print(f"  - {error}")
+
     if sitemap_data:
         print("Done!")
         search_query = input("Enter the search query (Leave empty to get all pages): ")
