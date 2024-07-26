@@ -35,3 +35,9 @@ To use the Sitemap Search tool, run the `main.py` script:
 ```bash
 python main.py
 ```
+
+## How to update
+It's simple as this is Github its just one command:
+```bash
+git pull
+```
