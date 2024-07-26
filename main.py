@@ -82,4 +82,171 @@ async def fetch_sitemap(session, semaphore, sitemap_url, show_errors, progress_b
 
             # Determine the namespace used
             namespace = None
-            if xml_data.tag.startswith(f'
+            if xml_data.tag.startswith(f'{{{NAMESPACE_0_9}}}'):
+                namespace = NAMESPACE_0_9
+            elif xml_data.tag.startswith(f'{{{NAMESPACE_0_84}}}'):
+                namespace = NAMESPACE_0_84
+
+            if not namespace:
+                print(f'Unsupported sitemap namespace in {sitemap_url}')
+                return None
+
+            # Process <url> elements
+            urls = xml_data.findall(f'.//{{{namespace}}}url')
+            tasks = [process_url(session, semaphore, url, namespace, cache_enabled) for url in urls]
+            
+            # Use tqdm for progress bar if enabled
+            if progress_bar:
+                results = []
+                for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs"):
+                    results.append(await coro)
+                sitemap_data.extend(results)
+            else:
+                sitemap_data.extend(await asyncio.gather(*tasks))
+
+            # Process <sitemap> elements
+            sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
+            nested_tasks = [
+                fetch_sitemap(session, semaphore, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar, cache_enabled)
+                for sitemap in sitemaps
+            ]
+
+            if progress_bar:
+                nested_results = []
+                for coro in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps"):
+                    nested_results.append(await coro)
+                for nested_data in nested_results:
+                    if nested_data:
+                        sitemap_data.extend(nested_data)
+            else:
+                nested_results = await asyncio.gather(*nested_tasks)
+                for nested_data in nested_results:
+                    if nested_data:
+                        sitemap_data.extend(nested_data)
+
+            return sitemap_data
+        except Exception as e:
+            print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
+            return None
+
+async def process_url(session, semaphore, url, namespace, cache_enabled):
+    """
+    Processes a single <url> element to extract the link and title.
+
+    Args:
+        session (aiohttp.ClientSession): The aiohttp session to use for the request.
+        semaphore (asyncio.Semaphore): Semaphore to limit concurrent requests.
+        url (Element): The <url> XML element.
+        namespace (str): The namespace used in the sitemap.
+        cache_enabled (bool): Whether caching is enabled.
+
+    Returns:
+        dict: A dictionary containing the title and link of the URL.
+    """
+    loc = url.find(f'{{{namespace}}}loc').text
+    name = url.find(f'{{{namespace}}}name')
+    title = name.text if name is not None and name.text else await fetch_title(session, semaphore, loc, cache_enabled)
+    return {'title': title if title else loc, 'link': loc}
+
+async def fetch_title(session, semaphore, url, cache_enabled):
+    """
+    Fetches the title of a webpage from the specified URL.
+
+    Args:
+        session (aiohttp.ClientSession): The aiohttp session to use for the request.
+        semaphore (asyncio.Semaphore): Semaphore to limit concurrent requests.
+        url (str): The URL of the webpage.
+        cache_enabled (bool): Whether caching is enabled.
+
+    Returns:
+        str: The title of the webpage, or None if the title cannot be fetched.
+    """
+    async with semaphore:
+        try:
+            html_text = await fetch_with_cache(session, url, cache_enabled)
+            soup = BeautifulSoup(html_text, 'html.parser')
+            return soup.title.string.strip() if soup.title else None
+        except Exception as e:
+            print(f'Error fetching or parsing HTML page {url}: {e}')
+            return None
+
+def search_sitemap(sitemap_data, search_query):
+    """
+    Searches for sites in the sitemap data containing the specified search query.
+
+    Args:
+        sitemap_data (list): A list of dictionaries containing the titles and links of the URLs in the sitemap.
+        search_query (str): The search query to match against the site titles.
+
+    Returns:
+        list: A list of dictionaries representing the matching sites.
+    """
+    return [site for site in sitemap_data if search_query.lower() in site['title'].lower()]
+
+def list_sites(sitemap_data):
+    """
+    Lists all sites in the sitemap data along with their titles.
+
+    Args:
+        sitemap_data (list): A list of dictionaries containing the titles and links of the URLs in the sitemap.
+    """
+    for index, site in enumerate(sitemap_data, start=1):
+        print(f"{index}. {site['title']}")
+
+def select_site(sitemap_data):
+    """
+    Allows the user to select a site from the sitemap data and returns its URL.
+
+    Args:
+        sitemap_data (list): A list of dictionaries containing the titles and links of the URLs in the sitemap.
+
+    Returns:
+        str: The URL of the selected site.
+    """
+    list_sites(sitemap_data)
+    selection = input("Enter the number of the site to see its URL: ")
+    try:
+        selection_index = int(selection) - 1
+        if 0 <= selection_index < len(sitemap_data):
+            return sitemap_data[selection_index]['link']
+        else:
+            print("Invalid selection.")
+            return None
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+        return None
+
+async def main():
+    # Check if -showerrors flag is present
+    show_errors = '-showerrors' in sys.argv
+    progress_bar = '-bar' in sys.argv  # Check if -bar flag is present
+    cache_enabled = '-cache' in sys.argv  # Check if -cache flag is present
+    
+    sitemap_url = input("Enter the URL of the sitemap XML (Leave empty to use https://ellinet13.github.io/sitemap.xml): ")
+    if not sitemap_url:
+        sitemap_url = "https://ellinet13.github.io/sitemap.xml"
+
+    print("Loading sitemap...")
+    async with aiohttp.ClientSession() as session:
+        # Limit concurrency with semaphore
+        semaphore = asyncio.Semaphore(10)
+        sitemap_data = await fetch_sitemap(session, semaphore, sitemap_url, show_errors, progress_bar, cache_enabled)
+    
+    if sitemap_data:
+        print("Done!")
+        search_query = input("Enter the search query (Leave empty to get all pages): ")
+        sitemap_data = search_sitemap(sitemap_data, search_query)
+        site_url = select_site(sitemap_data)
+        if site_url:
+            print("Page URL:", site_url)
+            open_link = input("Would you like to open it? (yes/no): ").strip().lower()
+            if open_link == 'yes':
+                import webbrowser
+                webbrowser.open(site_url)
+        else:
+            print("No site selected.")
+    else:
+        print("Failed to load sitemap.")
+
+if __name__ == "__main__":
+    asyncio.run(main())
