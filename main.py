@@ -179,8 +179,8 @@ async def main():
             # First pass: Fetch all sitemaps and count total URLs
             initial_data = await fetch_sitemap(session, sitemap_url, show_errors, True, sitemaps_memory)
             if initial_data:
-                urls_count = sum(len(xml_data.findall(f'.//{{{NAMESPACE_0_9}}}url')) for xml_data in sitemaps_memory)
-                total_urls = urls_count
+                # Count total URLs from all sitemaps
+                total_urls = sum(len(xml_data.findall(f'.//{{{NAMESPACE_0_9}}}url')) for xml_data in sitemaps_memory)
                 print(f"Total URLs found: {total_urls}")
             
             # Second pass: Fetch all URLs with a progress bar
@@ -200,8 +200,7 @@ async def main():
                 for nested_data in nested_results:
                     if nested_data:
                         sitemap_data.extend(nested_data)
-                        urls_count = len(nested_data)
-                        pbar.update(urls_count)
+                        pbar.update(len(nested_data))
         else:
             sitemap_data = await fetch_sitemap(session, sitemap_url, show_errors, False, sitemaps_memory)
     
@@ -222,5 +221,4 @@ async def main():
         print("Failed to load sitemap.")
 
 if __name__ == "__main__":
-
     asyncio.run(main())
