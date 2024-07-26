@@ -149,4 +149,11 @@ sitemap_data = fetch_sitemap("https://ellinet13.github.io/sitemap.xml")
 print("Done!")
 sitemap_data = search_sitemap(sitemap_data, input("Enter the search query (Leave empty to get all pages): "))
 site_url = select_site(sitemap_data)
-print("Page URL:", site_url)
+if site_url:
+    print("Page URL:", site_url)
+    open_link = input("Would you like to open it? (yes/no): ").strip().lower()
+    if open_link == 'yes':
+        import webbrowser
+        webbrowser.open(site_url)
+else:
+    print("No site selected.")
