@@ -3,7 +3,7 @@ import aiohttp
 from xml.etree import ElementTree as ET
 from bs4 import BeautifulSoup
 import sys
-import tqdm
+from tqdm import tqdm  # Import tqdm for the progress bar
 
 """
 This script was made by ElliNet13
@@ -15,7 +15,7 @@ print("Made by ElliNet13")
 NAMESPACE_0_9 = 'http://www.sitemaps.org/schemas/sitemap/0.9'
 NAMESPACE_0_84 = 'http://www.google.com/schemas/sitemap/0.84'
 
-async def fetch_sitemap(session, sitemap_url, show_errors):
+async def fetch_sitemap(session, sitemap_url, show_errors, progress_bar):
     """
     Fetches the sitemap XML from the specified URL and extracts the URLs along with their titles.
 
@@ -23,9 +23,7 @@ async def fetch_sitemap(session, sitemap_url, show_errors):
         session (aiohttp.ClientSession): The aiohttp session to use for the request.
         sitemap_url (str): The URL of the sitemap XML.
         show_errors (bool): Flag to determine if errors should be shown for child sitemaps.
-
-    Returns:
-        list: A list of dictionaries containing the titles and links of the URLs in the sitemap.
+        progress_bar (tqdm): The progress bar instance to update.
     """
     try:
         async with session.get(sitemap_url) as response:
@@ -34,8 +32,9 @@ async def fetch_sitemap(session, sitemap_url, show_errors):
                 xml_data = ET.fromstring(xml_text)
 
                 sitemap_data = []
-                namespace = None
 
+                # Determine the namespace used
+                namespace = None
                 if xml_data.tag.startswith(f'{{{NAMESPACE_0_9}}}'):
                     namespace = NAMESPACE_0_9
                 elif xml_data.tag.startswith(f'{{{NAMESPACE_0_84}}}'):
@@ -47,24 +46,33 @@ async def fetch_sitemap(session, sitemap_url, show_errors):
 
                 # Process <url> elements
                 urls = xml_data.findall(f'.//{{{namespace}}}url')
-                sitemap_data.extend(urls)
+                tasks = [process_url(session, url, namespace) for url in urls]
+                for _ in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Processing URLs", disable=not progress_bar):
+                    await _
+
+                sitemap_data.extend(await asyncio.gather(*tasks))
 
                 # Process <sitemap> elements
                 sitemaps = xml_data.findall(f'.//{{{namespace}}}sitemap')
-                nested_tasks = [fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors) for sitemap in sitemaps]
+                nested_tasks = [
+                    fetch_sitemap(session, sitemap.find(f'{{{namespace}}}loc').text, show_errors, progress_bar)
+                    for sitemap in sitemaps
+                ]
+                
+                for _ in tqdm(asyncio.as_completed(nested_tasks), total=len(nested_tasks), desc="Processing Sitemaps", disable=not progress_bar):
+                    await _
+
                 nested_results = await asyncio.gather(*nested_tasks)
                 for nested_data in nested_results:
                     if nested_data:
                         sitemap_data.extend(nested_data)
-                
+
                 return sitemap_data
             else:
-                if show_errors:
-                    print(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
+                print(f'Failed to fetch sitemap from {sitemap_url}: {response.status}')
                 return None
     except Exception as e:
-        if show_errors:
-            print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
+        print(f'Error fetching or parsing XML sitemap from {sitemap_url}: {e}')
         return None
 
 async def process_url(session, url, namespace):
@@ -153,39 +161,18 @@ def select_site(sitemap_data):
         return None
 
 async def main():
-    # Check if flags are present
+    # Check if -showerrors flag is present
     show_errors = '-showerrors' in sys.argv
-    use_progress_bar = '-bar' in sys.argv
+    progress_bar = '-bar' in sys.argv  # Check if -bar flag is present
     
     sitemap_url = input("Enter the URL of the sitemap XML (Leave empty to use https://ellinet13.github.io/sitemap.xml): ")
     if not sitemap_url:
         sitemap_url = "https://ellinet13.github.io/sitemap.xml"
 
     print("Loading sitemap...")
-
-    sitemap_data = []
-    total_urls = 0
-
     async with aiohttp.ClientSession() as session:
-        # Fetch sitemap data
-        sitemap_data = await fetch_sitemap(session, sitemap_url, show_errors)
-        if sitemap_data and use_progress_bar:
-            # Count URLs for progress bar
-            total_urls = len(sitemap_data)
-            print(f"Total URLs found: {total_urls}")
-        
-        if use_progress_bar:
-            # Process URLs with a progress bar
-            with tqdm.tqdm(total=total_urls, desc="Processing URLs") as pbar:
-                tasks = [process_url(session, url, NAMESPACE_0_9) for url in sitemap_data]
-                results = await asyncio.gather(*tasks)
-                sitemap_data = results
-                pbar.update(len(results))
-        else:
-            # Process URLs without a progress bar
-            tasks = [process_url(session, url, NAMESPACE_0_9) for url in sitemap_data]
-            sitemap_data = await asyncio.gather(*tasks)
-
+        sitemap_data = await fetch_sitemap(session, sitemap_url, show_errors, progress_bar)
+    
     if sitemap_data:
         print("Done!")
         search_query = input("Enter the search query (Leave empty to get all pages): ")
